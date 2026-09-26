@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+/* ── Tailwind v4: class-based dark mode ─────────────────── */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Smooth global theme transitions ───────────────────── */
+*,
+*::before,
+*::after {
+  transition-property: background-color, border-color, color, fill, stroke, box-shadow;
+  transition-duration: 200ms;
+  transition-timing-function: ease;
+}
+
+/* Exception: don't slow down Leaflet tile fade-in or animations */
+.leaflet-tile,
+.leaflet-tile-container,
+.leaflet-zoom-animated,
+[class*="animate-"],
+.animate-pulse,
+.animate-spin,
+.animate-ping {
+  transition: none !important;
+}
+
+@layer base {
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+    @apply bg-slate-50 text-slate-900 antialiased selection:bg-blue-500 selection:text-white dark:bg-slate-950 dark:text-slate-100;
+  }
+}
+
+/* ── Custom Scrollbar ──────────────────────────────────── */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-300 dark:bg-slate-700/80 rounded-full;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  @apply bg-slate-400 dark:bg-slate-600;
+}
+
+/* ── Leaflet Dark Theme Overrides ──────────────────────── */
+.dark .leaflet-container {
+  background-color: #0f172a;
+}
+
+.dark .leaflet-popup-content-wrapper,
+.dark .leaflet-popup-tip {
+  background: #1e293b;
+  color: #f1f5f9;
+  box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+  border: 1px solid #334155;
+}
+
+.dark .leaflet-popup-close-button {
+  color: #94a3b8 !important;
+}
+
+.dark .leaflet-popup-close-button:hover {
+  color: #f8fafc !important;
+}
+
+.dark .leaflet-bar a {
+  background-color: #1e293b;
+  border-bottom: 1px solid #334155;
+  color: #cbd5e1;
+}
+
+.dark .leaflet-bar a:hover {
+  background-color: #334155;
+  color: #ffffff;
+}
+
+.dark .leaflet-bar a.leaflet-disabled {
+  background-color: #0f172a;
+  color: #64748b;
+}

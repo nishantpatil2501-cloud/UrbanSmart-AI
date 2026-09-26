@@ -1,0 +1,25 @@
+# Environment
+.env
+.env*.local
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+dist-ssr/
+
+# ML Data & Artifacts
+ml/dataset/
+ml/models/
+ml/satellite_data/
+ml/outputs/
+__pycache__/
+*.pyc
+*.tif
+
+# Logs & OS files
+*.log
+.DS_Store
+.idea/
+.vscode/
