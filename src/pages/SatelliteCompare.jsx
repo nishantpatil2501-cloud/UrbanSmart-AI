@@ -4,7 +4,7 @@ import { MapContainer, TileLayer, Marker, Polygon, WMSTileLayer } from 'react-le
 import 'leaflet/dist/leaflet.css';
 import { WAYBACK_RELEASES } from '../data/waybackArray.js';
 
-const getImageryInfo = async (targetDateStr, lat, lng) => {
+const getImageryInfo = async (targetDateStr, lat, lng, typePrefix) => {
     const targetMs = new Date(targetDateStr).getTime();
     const waybackStart = new Date('2014-02-20').getTime();
     
@@ -24,12 +24,13 @@ const getImageryInfo = async (targetDateStr, lat, lng) => {
         }
         
         const actualDate = nearest.date;
+        const sceneId = `wayback-${nearest.layer}`;
         const url = `https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/${nearest.layer}/{z}/{y}/{x}`;
-        return { type: 'wayback', url, actualDate, source: 'Esri World Imagery Wayback' };
+        return { type: 'wayback', url, actualDate, source: 'Esri World Imagery Wayback', sceneId, error: null };
     } else {
         try {
             const geom = encodeURIComponent(JSON.stringify({ x: lng, y: lat }));
-            const qUrl = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/query?where=Category%3D1&geometry=${geom}&geometryType=esriGeometryPoint&inSR=4326&outFields=AcquisitionDate,SensorName&orderByFields=AcquisitionDate+DESC&time=1262304000000,${targetMs}&returnGeometry=false&f=json`;
+            const qUrl = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/query?where=Category%3D1&geometry=${geom}&geometryType=esriGeometryPoint&inSR=4326&outFields=AcquisitionDate,SensorName,OBJECTID&orderByFields=AcquisitionDate+DESC&time=1262304000000,${targetMs}&returnGeometry=false&f=json`;
             
             const res = await fetch(qUrl);
             const data = await res.json();
@@ -40,16 +41,19 @@ const getImageryInfo = async (targetDateStr, lat, lng) => {
                     const actualDate = new Date(attrs.AcquisitionDate).toISOString().split('T')[0];
                     const sensor = attrs.SensorName || 'USGS Landsat';
                     const timeWindow = `${attrs.AcquisitionDate - 86400000},${attrs.AcquisitionDate + 86400000}`;
-                    const url = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/exportImage?bbox={bbox}&bboxSR=3857&imageSR=3857&size=256,256&format=jpgpng&f=image&time=${timeWindow}`;
-                    return { type: 'landsat', url, actualDate, source: `USGS Archive (${sensor})` };
+                    const sceneId = `landsat-${attrs.OBJECTID || attrs.AcquisitionDate}`;
+                    const url = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/exportImage?bboxSR=3857&imageSR=3857&size=256,256&format=jpgpng&f=image&time=${timeWindow}`;
+                    return { type: 'landsat', url, actualDate, source: `USGS Archive (${sensor})`, sceneId, error: null };
                 }
             }
         } catch(e) {
             console.error("Landsat query error:", e);
         }
         
-        const url = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/exportImage?bbox={bbox}&bboxSR=3857&imageSR=3857&size=256,256&format=jpgpng&f=image&time=1262304000000,${targetMs}`;
-        return { type: 'landsat', url, actualDate: targetDateStr, source: 'USGS Landsat Archive' };
+        // Fallback for Landsat if query fails (should ideally not happen, but we give a generic scene ID)
+        const sceneId = `landsat-fallback-${targetDateStr}`;
+        const url = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/exportImage?bboxSR=3857&imageSR=3857&size=256,256&format=jpgpng&f=image&time=1262304000000,${targetMs}`;
+        return { type: 'landsat', url, actualDate: targetDateStr, source: 'USGS Landsat Archive (Generic)', sceneId, error: null };
     }
 };
 
@@ -131,9 +135,7 @@ const SatelliteCompare = () => {
   const todayStr = new Date().toISOString().split('T')[0];
   const [histDate, setHistDate] = useState('2023-12-07');
   const [currDate, setCurrDate] = useState(todayStr);
-  const [actualHistDate, setActualHistDate] = useState('');
-  const [actualCurrDate, setActualCurrDate] = useState('');
-      
+          
   const [beforeFile, setBeforeFile] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
   const [beforePreview, setBeforePreview] = useState(null);
@@ -150,24 +152,62 @@ const SatelliteCompare = () => {
 
   const area = puneAreas[selectedArea];
 
-  const [histLayer, setHistLayer] = useState(null);
-  const [currLayer, setCurrLayer] = useState(null);
+  const [beforeImagery, setBeforeImagery] = useState({
+    requestedDate: histDate, actualAcquisitionDate: '', source: '', imageryUrl: '', sceneId: '', loading: true, error: null, type: ''
+  });
+  
+  const [currentImagery, setCurrentImagery] = useState({
+    requestedDate: currDate, actualAcquisitionDate: '', source: '', imageryUrl: '', sceneId: '', loading: true, error: null, type: ''
+  });
 
   useEffect(() => {
     let active = true;
-    const fetchLayers = async () => {
-      const hist = await getImageryInfo(histDate, area.lat, area.lng);
-      const curr = await getImageryInfo(currDate, area.lat, area.lng);
-      if (active) {
-        setHistLayer(hist);
-        setActualHistDate(hist.actualDate);
-        setCurrLayer(curr);
-        setActualCurrDate(curr.actualDate);
+    
+    const fetchBefore = async () => {
+      setBeforeImagery(prev => ({ ...prev, loading: true, error: null, type: '', requestedDate: histDate }));
+      try {
+        const hist = await getImageryInfo(histDate, area.lat, area.lng, 'before');
+        if (active) {
+          setBeforeImagery({
+            requestedDate: histDate,
+            actualAcquisitionDate: hist.actualDate,
+            source: hist.source,
+            imageryUrl: hist.url,
+            sceneId: hist.sceneId, type: hist.type,
+            loading: false,
+            error: hist.error
+          });
+        }
+      } catch (err) {
+        if (active) setBeforeImagery(prev => ({ ...prev, loading: false, error: 'Historical imagery unavailable for selected date.' }));
       }
     };
-    fetchLayers();
+
+    const fetchCurrent = async () => {
+      setCurrentImagery(prev => ({ ...prev, loading: true, error: null, type: '', requestedDate: currDate }));
+      try {
+        const curr = await getImageryInfo(currDate, area.lat, area.lng, 'current');
+        if (active) {
+          setCurrentImagery({
+            requestedDate: currDate,
+            actualAcquisitionDate: curr.actualDate,
+            source: curr.source,
+            imageryUrl: curr.url,
+            sceneId: curr.sceneId, type: curr.type,
+            loading: false,
+            error: curr.error
+          });
+        }
+      } catch (err) {
+        if (active) setCurrentImagery(prev => ({ ...prev, loading: false, error: 'Current imagery unavailable for selected date.' }));
+      }
+    };
+
+    fetchBefore();
+    fetchCurrent();
+
     return () => { active = false; };
-  }, [histDate, currDate, selectedArea]);
+  }, [histDate, currDate, area.lat, area.lng]);
 
 
 
@@ -330,7 +370,7 @@ const SatelliteCompare = () => {
             />
           </div>
           <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold pl-1">
-             Actual Imagery: {actualHistDate}
+             Actual Imagery: {beforeImagery.actualAcquisitionDate}
           </p>
         </div>
 
@@ -356,7 +396,7 @@ const SatelliteCompare = () => {
             />
           </div>
           <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold pl-1">
-             Actual Imagery: {actualCurrDate}
+             Actual Imagery: {currentImagery.actualAcquisitionDate}
           </p>
         </div>
       </div>
@@ -393,7 +433,11 @@ const SatelliteCompare = () => {
                 zoomControl={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer key={histLayer?.url || "hist"} url={histLayer?.url || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
+                {beforeImagery.imageryUrl && !beforeImagery.error ? (
+    beforeImagery.type === 'landsat' ? 
+    <WMSTileLayer key={`before-${beforeImagery.sceneId}`} url={beforeImagery.imageryUrl} maxZoom={19} attribution={beforeImagery.source} /> :
+    <TileLayer key={`before-${beforeImagery.sceneId}`} url={beforeImagery.imageryUrl} maxZoom={19} attribution={beforeImagery.source} />
+) : <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-[400] text-slate-400 text-sm font-semibold">{beforeImagery.error || (beforeImagery.loading ? "Loading BEFORE imagery..." : "Historical imagery unavailable for selected date.")}</div>}
                 <Marker position={[area.lat, area.lng]} />
                 <Polygon
                   positions={area.polygon}
@@ -448,7 +492,11 @@ const SatelliteCompare = () => {
                 zoomControl={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer key={histLayer?.url || "hist"} url={histLayer?.url || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
+                {currentImagery.imageryUrl && !currentImagery.error ? (
+    currentImagery.type === 'landsat' ? 
+    <WMSTileLayer key={`current-${currentImagery.sceneId}`} url={currentImagery.imageryUrl} maxZoom={19} attribution={currentImagery.source} /> :
+    <TileLayer key={`current-${currentImagery.sceneId}`} url={currentImagery.imageryUrl} maxZoom={19} attribution={currentImagery.source} />
+) : <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-[400] text-slate-400 text-sm font-semibold">{currentImagery.error || (currentImagery.loading ? "Loading CURRENT imagery..." : "Current imagery unavailable for selected date.")}</div>}
                 <Marker position={[area.lat, area.lng]} />
 
                 {showResult && (
