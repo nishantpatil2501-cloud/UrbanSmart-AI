@@ -1,6 +1,7 @@
 import { useParams, Link } from 'react-router-dom';
 import { useLocationData } from '../context/LocationContext';
 import { getInspectionsByDetectionId, createInspection } from '../services/inspectionService.js';
+import { getDetectionById } from '../services/detectionService.js';
 import { MapContainer, TileLayer, Marker, Polygon, useMap, useMapEvents } from 'react-leaflet';
 import { useState, useEffect } from 'react';
 import {
@@ -68,9 +69,47 @@ const MapAutoZoom = ({ center, zoomTrigger }) => {
 
 const CaseDetail = () => {
   const { id } = useParams();
-  const { mockDetections, updateStatus } = useLocationData();
-  const detection = (mockDetections || []).find((d) => d.id === id);
+  const { updateStatus } = useLocationData();
+  const [detection, setDetection] = useState(null);
+  const [loadingDetection, setLoadingDetection] = useState(true);
   const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    if (id) {
+      setLoadingDetection(true);
+      getDetectionById(id)
+        .then((data) => {
+          if (isMounted && data) {
+            setDetection({
+              ...data,
+              lat: data.latitude || data.lat || 18.5204,
+              lng: data.longitude || data.lng || 73.8567,
+              polygon: Array.isArray(data.polygon) ? data.polygon : [],
+              area: data.area || 'Unknown Zone',
+              city: 'Pune',
+              type: data.type || 'Structure Anomaly',
+              risk: data.risk || 'Medium',
+              conf: data.confidence || data.conf || 85,
+              changed_area: data.area_size || data.changed_area || (data.description ? (parseFloat((data.description.match(/~([\d.]+)\s*sq meters/) || [])[1]) || 120) : 120),
+              status: data.status || 'Pending Inspection',
+              historical_date: data.historical_date || '2023-01-15',
+              current_date: data.current_date || '2024-03-20',
+              date: data.date ? data.date.split('T')[0] : 'Recent',
+            });
+            setLoadingDetection(false);
+          }
+        })
+        .catch((err) => {
+          console.warn('Detection fetch by ID failed:', err);
+          if (isMounted) {
+            setDetection(null);
+            setLoadingDetection(false);
+          }
+        });
+    }
+    return () => { isMounted = false; };
+  }, [id]);
   const [viewMode, setViewMode] = useState('three-part');
   const [mapA, setMapA] = useState(null);
   const [mapB, setMapB] = useState(null);

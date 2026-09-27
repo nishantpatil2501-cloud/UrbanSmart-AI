@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
+import { getDetections } from '../services/detectionService.js';
 import { Search, Filter, Eye, AlertTriangle, ShieldAlert, CheckCircle2, Clock, XCircle, ArrowUpDown, MapPin } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLocationData, PRESET_PLACES } from '../context/LocationContext';
@@ -8,9 +9,33 @@ const Alerts = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedRisk, setSelectedRisk] = useState('ALL');
   const [selectedStatus, setSelectedStatus] = useState('ALL');
-  const { location, mockDetections, updateLocation } = useLocationData();
+  const [detections, setDetections] = useState([]);
+  const { location, updateLocation } = useLocationData();
 
-  const filteredAlerts = (mockDetections || []).filter((alert) => {
+  useEffect(() => {
+    let isMounted = true;
+    getDetections({ includeDemo: true })
+      .then((data) => {
+        if (isMounted) setDetections(data || []);
+      })
+      .catch(() => {
+        if (isMounted) setDetections([]);
+      });
+    return () => { isMounted = false; };
+  }, []);
+
+  const normalizedDetections = (detections || []).map((d) => ({
+    ...d,
+    area: d.area || 'Unknown Zone',
+    city: 'Pune',
+    type: d.type || 'Structure Anomaly',
+    risk: d.risk || 'Medium',
+    conf: d.confidence || d.conf || 85,
+    changed_area: d.area_size || d.changed_area || (d.description ? (parseFloat((d.description.match(/~([\d.]+)\s*sq meters/) || [])[1]) || 120) : 120),
+    status: d.status || 'Pending Inspection',
+  }));
+
+  const filteredAlerts = normalizedDetections.filter((alert) => {
     const matchesSearch =
       alert.area.toLowerCase().includes(searchTerm.toLowerCase()) ||
       alert.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -35,7 +60,7 @@ const Alerts = () => {
               Detection Alerts & Case Registry
             </h1>
             <span className="px-2.5 py-0.5 text-xs font-semibold rounded-full bg-rose-100 dark:bg-rose-950/50 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900">
-              {(mockDetections || []).length} Cases Logged
+              {detections.length} Cases Logged
             </span>
           </div>
           <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">
@@ -58,11 +83,9 @@ const Alerts = () => {
               if (place) updateLocation(place.lat, place.lng, place.name);
             }}
           >
-            {location && location.isUserCurrent && (
-              <option value="My Current Location">My Current Location</option>
-            )}
+            
             {PRESET_PLACES.map((p) => (
-              <option key={p.name} value={p.name}>
+              <option key={p.name} value={p.name} className="bg-white dark:bg-slate-800 text-slate-900 dark:text-slate-100">
                 {p.name}
               </option>
             ))}
@@ -186,3 +209,4 @@ const Alerts = () => {
 };
 
 export default Alerts;
+

@@ -1,7 +1,50 @@
-import { useState, useRef } from 'react';
+﻿import { useState, useRef } from 'react';
 import { Layers, ScanSearch, Calendar, ArrowRight, CheckCircle2, AlertTriangle, MapPin, Sparkles, SlidersHorizontal, UploadCloud, FileImage, Cpu } from 'lucide-react';
 import { MapContainer, TileLayer, Marker, Polygon } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
+import { WAYBACK_RELEASES } from '../data/waybackArray.js';
+
+const getNearestWayback = (targetDateStr) => {
+    const target = new Date(targetDateStr).getTime();
+    let nearest = WAYBACK_RELEASES[0];
+    let minDiff = Infinity;
+    
+    for (const entry of WAYBACK_RELEASES) {
+        const d = new Date(entry.date).getTime();
+        const diff = Math.abs(d - target);
+        if (diff < minDiff) {
+            minDiff = diff;
+            nearest = entry;
+        }
+    }
+    
+    const actualDate = nearest.date;
+    const url = `https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/${nearest.layer}/{z}/{y}/{x}`;
+    return { url, actualDate };
+};
+
+
+/* REMOVE */
+const getNearestWayback_old = (targetDateStr) => {
+    const target = new Date(targetDateStr).getTime();
+    let nearest = waybackArray[0];
+    let minDiff = Infinity;
+    
+    for (const entry of waybackArray) {
+        const d = new Date(entry.datetime).getTime();
+        const diff = Math.abs(d - target);
+        if (diff < minDiff) {
+            minDiff = diff;
+            nearest = entry;
+        }
+    }
+    
+    const dObj = new Date(nearest.datetime);
+    const actualDate = dObj.toISOString().split('T')[0];
+    return { url: nearest.url, actualDate };
+};
+import { getDetections, createDetection, deleteDetection } from '../services/detectionService';
+import { Trash2 } from 'lucide-react';
 import L from 'leaflet';
 
 // Fix default marker icons
@@ -55,8 +98,13 @@ const SatelliteCompare = () => {
   const [selectedArea, setSelectedArea] = useState('Baner');
   const [isComparing, setIsComparing] = useState(false);
   const [showResult, setShowResult] = useState(false);
-  const [histDate, setHistDate] = useState('2023-01-15');
-  const [currDate, setCurrDate] = useState('2023-10-25');
+  const todayStr = new Date().toISOString().split('T')[0];
+  const [histDate, setHistDate] = useState('2014-02-20');
+  const [currDate, setCurrDate] = useState(todayStr);
+  const [actualHistDate, setActualHistDate] = useState('');
+  const [actualCurrDate, setActualCurrDate] = useState('');
+  const [histMapUrl, setHistMapUrl] = useState('');
+  const [currMapUrl, setCurrMapUrl] = useState('');
   
   const [beforeFile, setBeforeFile] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
@@ -64,11 +112,36 @@ const SatelliteCompare = () => {
   const [currentPreview, setCurrentPreview] = useState(null);
   const [predictedMaskUrl, setPredictedMaskUrl] = useState(null);
   const [apiError, setApiError] = useState(null);
+  const [boxes, setBoxes] = useState([]);
+  const [analysisStatus, setAnalysisStatus] = useState('idle');
+  const [deleteFeedback, setDeleteFeedback] = useState(null);
+  const deletedIds = useRef(new Set());
 
   const beforeInputRef = useRef(null);
   const currentInputRef = useRef(null);
 
   const area = puneAreas[selectedArea];
+
+  useEffect(() => {
+    const hist = getNearestWayback(histDate);
+    const curr = getNearestWayback(currDate);
+    setHistMapUrl(hist.url);
+    setActualHistDate(hist.actualDate);
+    setCurrMapUrl(curr.url);
+    setActualCurrDate(curr.actualDate);
+  }, [histDate, currDate]);
+
+  const handleDeleteDetection = async (id) => {
+    try {
+      await deleteDetection(id);
+      deletedIds.current.add(id);
+      setBoxes(prev => prev.filter(b => b.id !== id));
+      setDeleteFeedback(`Successfully deleted record ${id}`);
+      setTimeout(() => setDeleteFeedback(null), 3000);
+    } catch(err) {
+      console.error("Delete failed", err);
+    }
+  };
 
   const handleAreaChange = (e) => {
     setSelectedArea(e.target.value);
@@ -96,7 +169,7 @@ const SatelliteCompare = () => {
     }
   };
 
-  const handleCompare = async () => {
+  const analyzeCenter = async () => {
     setIsComparing(true);
     setShowResult(false);
     setApiError(null);
@@ -200,7 +273,7 @@ const SatelliteCompare = () => {
 
       {/* Comparison Control Taskbar */}
       <div className="bg-white dark:bg-slate-900/90 p-4 sm:p-5 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-800/80 flex flex-col md:flex-row gap-4 items-stretch md:items-end justify-between">
-        {/* Baseline Date & File Selector */}
+        {/* Baseline Date Selector */}
         <div className="flex-1 space-y-2">
           <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
             <Calendar className="w-3.5 h-3.5 text-blue-500" />
@@ -209,27 +282,16 @@ const SatelliteCompare = () => {
           <div className="flex items-center gap-2">
             <input
               type="date"
+              min="2010-01-01"
+              max={currDate}
               value={histDate}
               onChange={(e) => setHistDate(e.target.value)}
               className="flex-1 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <input
-              type="file"
-              ref={beforeInputRef}
-              accept="image/*"
-              onChange={handleBeforeFileSelect}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => beforeInputRef.current?.click()}
-              className="px-3 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shrink-0"
-              title="Upload custom BEFORE image file"
-            >
-              <UploadCloud className="w-3.5 h-3.5 text-blue-500" />
-              <span>{beforeFile ? beforeFile.name.substring(0, 10) + '…' : 'Upload BEFORE'}</span>
-            </button>
           </div>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold pl-1">
+             Actual Imagery: {actualHistDate}
+          </p>
         </div>
 
         {/* Divider icon */}
@@ -237,7 +299,7 @@ const SatelliteCompare = () => {
           <Layers className="w-5 h-5" />
         </div>
 
-        {/* Current Date & File Selector */}
+        {/* Current Date Selector */}
         <div className="flex-1 space-y-2">
           <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
             <Calendar className="w-3.5 h-3.5 text-cyan-500" />
@@ -246,51 +308,19 @@ const SatelliteCompare = () => {
           <div className="flex items-center gap-2">
             <input
               type="date"
+              min={histDate}
+              max={todayStr}
               value={currDate}
               onChange={(e) => setCurrDate(e.target.value)}
               className="flex-1 bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm font-medium text-slate-800 dark:text-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
             />
-            <input
-              type="file"
-              ref={currentInputRef}
-              accept="image/*"
-              onChange={handleCurrentFileSelect}
-              className="hidden"
-            />
-            <button
-              type="button"
-              onClick={() => currentInputRef.current?.click()}
-              className="px-3 py-2.5 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-semibold flex items-center gap-1.5 shrink-0"
-              title="Upload custom CURRENT image file"
-            >
-              <UploadCloud className="w-3.5 h-3.5 text-cyan-500" />
-              <span>{currentFile ? currentFile.name.substring(0, 10) + '…' : 'Upload CURRENT'}</span>
-            </button>
           </div>
-        </div>
-
-        {/* Action Button */}
-        <div>
-          <button
-            onClick={handleCompare}
-            disabled={isComparing}
-            className="w-full md:w-auto bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 px-6 rounded-xl transition-all shadow-md shadow-blue-500/25 flex items-center justify-center disabled:opacity-70 text-xs sm:text-sm gap-2"
-          >
-            {isComparing ? (
-              <>
-                <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
-                <span>ChangeFormer Predicting…</span>
-              </>
-            ) : (
-              <>
-                <ScanSearch className="w-4 h-4" />
-                <span>Run Change Analysis</span>
-              </>
-            )}
-          </button>
+          <p className="text-[10px] text-slate-400 dark:text-slate-500 font-semibold pl-1">
+             Actual Imagery: {actualCurrDate}
+          </p>
         </div>
       </div>
-
+      
       {/* Map Panels Container */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         {/* HISTORICAL MAP PANEL */}
@@ -299,7 +329,7 @@ const SatelliteCompare = () => {
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
               <span className="font-bold text-slate-800 dark:text-slate-200 text-xs sm:text-sm">
-                Historical Baseline — {histDate}
+                Historical Baseline ΓÇö {histDate}
               </span>
             </div>
             <span className="text-[11px] font-mono text-slate-500 dark:text-slate-400 bg-slate-200/80 dark:bg-slate-700/60 px-2 py-0.5 rounded-md">
@@ -323,7 +353,7 @@ const SatelliteCompare = () => {
                 zoomControl={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer url={esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
+                <TileLayer url={histMapUrl || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
                 <Marker position={[area.lat, area.lng]} />
                 <Polygon
                   positions={area.polygon}
@@ -334,7 +364,7 @@ const SatelliteCompare = () => {
 
             {/* Historical overlay label */}
             <div className="absolute top-3 left-3 z-[400] bg-slate-900/85 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-lg font-semibold shadow border border-slate-700 pointer-events-none">
-              BEFORE · {selectedArea}, Pune
+              BEFORE ┬╖ {selectedArea}, Pune
             </div>
           </div>
         </div>
@@ -345,7 +375,7 @@ const SatelliteCompare = () => {
             <div className="flex items-center gap-2">
               <span className="w-2.5 h-2.5 rounded-full bg-blue-500"></span>
               <span className="font-bold text-slate-800 dark:text-slate-200 text-xs sm:text-sm">
-                Current Pass — {currDate}
+                Current Pass ΓÇö {currDate}
               </span>
             </div>
             <span className="text-[11px] font-mono text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 px-2 py-0.5 rounded-md border border-blue-200 dark:border-blue-900">
@@ -378,7 +408,7 @@ const SatelliteCompare = () => {
                 zoomControl={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer url={esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
+                <TileLayer url={histMapUrl || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
                 <Marker position={[area.lat, area.lng]} />
 
                 {showResult && (
@@ -392,7 +422,7 @@ const SatelliteCompare = () => {
 
             {/* Current label */}
             <div className="absolute top-3 left-3 z-[400] bg-blue-600/90 backdrop-blur-sm text-white text-xs px-2.5 py-1 rounded-lg font-semibold shadow pointer-events-none">
-              CURRENT · {selectedArea}, Pune
+              CURRENT ┬╖ {selectedArea}, Pune
             </div>
 
             {/* Detected Change badge */}
@@ -409,7 +439,7 @@ const SatelliteCompare = () => {
                 <div className="w-64 h-2 bg-slate-700 rounded-full overflow-hidden mb-3">
                   <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 animate-pulse w-3/4"></div>
                 </div>
-                <p className="text-white font-bold text-sm">Processing ChangeFormer Model Inference…</p>
+                <p className="text-white font-bold text-sm">Processing ChangeFormer Model InferenceΓÇª</p>
                 <p className="text-slate-400 text-xs mt-1">POSTing imagery to http://127.0.0.1:8000/predict</p>
               </div>
             )}
@@ -417,70 +447,136 @@ const SatelliteCompare = () => {
         </div>
       </div>
 
-      {/* Detection Result Banner */}
-      {showResult && (
-        <div className="bg-white dark:bg-slate-900/90 border-l-4 border-rose-500 rounded-2xl shadow-md border border-slate-200/80 dark:border-slate-800/80 p-6 flex flex-col lg:flex-row gap-6 items-start lg:items-center justify-between">
-          <div className="flex-1 space-y-2">
-            <div className="flex flex-wrap items-center gap-2.5">
-              <h3 className="text-lg font-bold text-slate-900 dark:text-slate-100">
-                Potential New Construction Detected
-              </h3>
-              <span className="px-2.5 py-0.5 rounded-full bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 text-xs font-bold border border-rose-200 dark:border-rose-900">
-                High Risk
-              </span>
-              <span className="px-2.5 py-0.5 rounded-full bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 text-xs font-bold border border-emerald-200 dark:border-emerald-900 flex items-center gap-1">
-                <CheckCircle2 className="w-3 h-3" />
-                ChangeFormer ML Inference Verified
-              </span>
+      {/* Analysis Output Dashboard */}
+        {(analysisStatus === 'success' || analysisStatus === 'no_changes') && (
+          <div className="mt-8 bg-white dark:bg-slate-900/90 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-800/80 p-5">
+            <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
+              <Sparkles className="w-5 h-5 text-indigo-500" />
+              <h2 className="font-bold text-slate-900 dark:text-slate-100 text-lg">Change Analysis Report</h2>
             </div>
-
-            <p className="text-slate-600 dark:text-slate-300 text-sm leading-relaxed">
-              Significant structural footprint addition detected in <strong className="text-slate-900 dark:text-slate-100">{selectedArea}</strong> between{' '}
-              <span className="font-mono">{histDate}</span> and <span className="font-mono">{currDate}</span>. The returned binary change mask highlights predicted building structural variations.
-            </p>
-
-            <p className="text-slate-400 dark:text-slate-500 text-xs font-mono">
-              Coordinates: {area.lat.toFixed(4)}° N, {area.lng.toFixed(4)}° E · Field validation recommended prior to PMC notice issuance.
-            </p>
-          </div>
-
-          <div className="flex items-center gap-6 self-stretch lg:self-auto justify-between border-t lg:border-t-0 pt-4 lg:pt-0 border-slate-200 dark:border-slate-800">
-            {predictedMaskUrl && (
-              <div className="flex flex-col items-center gap-1.5 shrink-0">
-                <div className="w-20 h-20 rounded-xl overflow-hidden border border-rose-500/50 bg-black p-0.5 shadow-md">
-                  <img
-                    src={predictedMaskUrl}
-                    alt="ChangeFormer PNG Mask"
-                    className="w-full h-full object-contain"
-                  />
+            
+            {/* Top Stats & Mask Row */}
+            <div className="flex flex-col md:flex-row gap-6">
+              <div className="flex-1 grid grid-cols-2 gap-4">
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold mb-1">Detected Regions</p>
+                  <p className="text-3xl font-bold text-slate-900 dark:text-slate-100">{boxes.length}</p>
+                  {analysisStatus === 'no_changes' && (
+                    <p className="text-sm font-semibold text-emerald-600 dark:text-emerald-400 mt-2">No detected changes</p>
+                  )}
                 </div>
-                <span className="text-[10px] text-slate-400 font-mono">PNG Mask Output</span>
+                
+                <div className="bg-slate-50 dark:bg-slate-800/50 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
+                  <p className="text-xs text-slate-500 dark:text-slate-400 font-semibold mb-1">Status</p>
+                  <div className="flex items-center gap-2 mt-2">
+                    <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                    <span className="text-sm font-bold text-slate-700 dark:text-slate-200">Analysis Complete</span>
+                  </div>
+                </div>
+              </div>
+
+              {predictedMaskUrl && (
+                <div className="flex flex-col items-center gap-1.5 shrink-0">
+                  <div className="w-24 h-24 rounded-xl overflow-hidden border border-rose-500/50 bg-black p-0.5 shadow-md">
+                    <img src={predictedMaskUrl} alt="ChangeFormer PNG Mask" className="w-full h-full object-contain" />
+                  </div>
+                  <span className="text-[10px] font-mono text-slate-400 dark:text-slate-500 font-semibold tracking-wider">
+                    MODEL OUTPUT
+                  </span>
+                </div>
+              )}
+            </div>
+            
+            {/* Detailed Report */}
+            {boxes.length > 0 && (
+              <div className="mt-6 border-t border-slate-200/60 dark:border-slate-800/60 pt-6">
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200 mb-4 flex items-center gap-2">
+                  <span className="w-1.5 h-4 bg-indigo-500 rounded-full"></span>
+                  Detailed Change Analysis Report
+                </h3>
+                <div className="flex flex-col gap-4">
+                  {boxes.map((box) => (
+                    <div key={box.id} className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
+                      <div className="flex flex-col sm:flex-row justify-between items-start mb-2 gap-2">
+                        <span className="text-sm font-bold text-rose-600 dark:text-rose-400">{box.label}</span>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-md">
+                            AI-Generated Candidate Detection
+                          </span>
+                          <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400 rounded-md">
+                            Requires Verification
+                          </span>
+                          <button 
+                            onClick={() => handleDeleteDetection(box.id)}
+                            className="p-1 text-rose-500 hover:text-rose-700 hover:bg-rose-50 dark:hover:bg-rose-900/30 rounded-md transition-colors" 
+                            title="Delete record"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-sm text-slate-700 dark:text-slate-300 mb-4">{box.description}</p>
+                      
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-y-3 gap-x-4 text-xs">
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Detection ID</span>
+                          <span className="font-mono font-semibold text-slate-800 dark:text-slate-200">{box.id}</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Change Type</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">{box.type}</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Coordinates</span>
+                          <span className="font-mono text-slate-800 dark:text-slate-200">{box.latitude?.toFixed(4)}, {box.longitude?.toFixed(4)}</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Est. Area</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">~{box.areaSqMeters?.toFixed(1) || box.area || 0} sq meters</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Confidence</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">{box.confidence}%</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Risk Level</span>
+                          <span className="font-semibold text-rose-600 dark:text-rose-400">{box.risk}</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Status</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">Pending Inspection</span>
+                        </div>
+                        <div>
+                          <span className="block text-slate-500 dark:text-slate-400 font-medium">Comparison Period</span>
+                          <span className="font-semibold text-slate-800 dark:text-slate-200">{histDate} to {currDate}</span>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
               </div>
             )}
-
-            <div className="flex flex-col items-center justify-center p-4 bg-slate-50 dark:bg-slate-800/80 rounded-xl border border-slate-200/80 dark:border-slate-700 min-w-[120px]">
-              <span className="text-3xl font-extrabold text-slate-900 dark:text-slate-100">94%</span>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 uppercase tracking-widest font-bold mt-0.5">
-                AI Confidence
-              </span>
+            
+            {/* Imagery Details at the absolute bottom */}
+            <div className="mt-6 bg-blue-50 dark:bg-blue-900/20 p-4 rounded-xl border border-blue-100 dark:border-blue-800/50">
+              <p className="text-xs text-blue-600 dark:text-blue-400 font-semibold mb-2">Imagery Details</p>
+              <div className="flex items-center justify-between text-sm">
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400 block text-xs">Before Pass</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{histDate}</span>
+                </div>
+                <ArrowRight className="w-4 h-4 text-slate-400" />
+                <div className="text-right">
+                  <span className="text-slate-500 dark:text-slate-400 block text-xs">Current Pass</span>
+                  <span className="font-bold text-slate-800 dark:text-slate-200">{currDate}</span>
+                </div>
+              </div>
             </div>
-
-            <div className="flex flex-col gap-2 min-w-[140px]">
-              <button className="w-full bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-semibold py-2.5 px-4 rounded-xl shadow-xs transition-all">
-                Create Alert Case
-              </button>
-              <button
-                onClick={() => setShowResult(false)}
-                className="w-full bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 text-xs sm:text-sm font-medium py-2 px-4 rounded-xl transition-all"
-              >
-                Dismiss Result
-              </button>
-            </div>
+            
           </div>
-        </div>
-      )}
-    </div>
-  );
-};
-
-export default SatelliteCompare;
+        )}
+      </div>
+    );
+  };
+  
+  export default SatelliteCompare;

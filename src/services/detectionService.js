@@ -5,13 +5,17 @@ import { supabase } from '../lib/supabase.js';
  * @param {Object} options Filter options (includeDemo, risk, limit)
  */
 export async function getDetections(options = {}) {
-  const { includeDemo = true, risk = null, limit = 100 } = options;
+  const { includeDemo = true, risk = null, limit = 1000, includeMarkers = false } = options;
 
   let query = supabase
     .from('detections')
     .select('*')
     .order('created_at', { ascending: false })
     .limit(limit);
+
+  if (!includeMarkers) {
+    query = query.neq('status', 'VIEWPORT_MARKER');
+  }
 
   if (!includeDemo) {
     query = query.eq('is_demo', false);
@@ -70,7 +74,7 @@ export async function createDetection(detection) {
 
   const { data, error } = await supabase
     .from('detections')
-    .insert([payload])
+    .upsert([payload], { onConflict: 'id' })
     .select()
     .single();
 

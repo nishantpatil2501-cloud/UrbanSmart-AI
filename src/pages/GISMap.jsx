@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polygon, useMap, useMapEvents } from 'react-leaflet';
 import { useLocationData, PRESET_PLACES } from '../context/LocationContext';
+import { getDetections } from '../services/detectionService.js';
 import { useNavigate } from 'react-router-dom';
 import { MapPin, Navigation, MapPinOff, Layers, Eye } from 'lucide-react';
 import 'leaflet/dist/leaflet.css';
@@ -54,16 +55,46 @@ const MapClickListener = ({ onMapClick }) => {
   return null;
 };
 
+function ChangeView({ center }) {
+  const map = useMap();
+  map.setView(center, 13);
+  return null;
+}
+
 const GISMap = () => {
   const [activeDetection, setActiveDetection] = useState(null);
   const [filterRisk, setFilterRisk] = useState('ALL');
   const navigate = useNavigate();
-  const { location, error, loadingLocation, mockDetections, updateLocation, requestCurrentLocation } = useLocationData();
-  
+  const { location, error, updateLocation } = useLocationData();
+  const [detections, setDetections] = useState([]);
+
+  useEffect(() => {
+    let isMounted = true;
+    getDetections({ includeDemo: true })
+      .then((data) => {
+        if (isMounted) setDetections(data || []);
+      })
+      .catch(() => {
+        if (isMounted) setDetections([]);
+      });
+    return () => { isMounted = false; };
+  }, []);
+
   const center = location ? [location.lat, location.lng] : [18.5204, 73.8567];
 
-  const filteredDetections = (mockDetections || []).filter(
-    (d) => filterRisk === 'ALL' || d.risk.toUpperCase() === filterRisk
+  const filteredDetections = (detections || []).map((d) => ({
+    ...d,
+    lat: d.latitude || d.lat || 18.5204,
+    lng: d.longitude || d.lng || 73.8567,
+    polygon: Array.isArray(d.polygon) ? d.polygon : [],
+    risk: d.risk || 'Medium',
+    conf: d.confidence || d.conf || 85,
+    changed_area: d.area_size || d.changed_area || 120,
+    city: 'Pune',
+    type: d.type || 'Structure Anomaly',
+    status: d.status || 'Pending Inspection',
+  })).filter(
+    (d) => filterRisk === 'ALL' || d.risk.toUpperCase() === filterRisk.toUpperCase()
   );
 
   const handleZoomToSite = (det) => {
@@ -104,9 +135,7 @@ const GISMap = () => {
                   if (place) updateLocation(place.lat, place.lng, place.name);
                 }}
               >
-                {location && location.isUserCurrent && (
-                  <option value="My Current Location">My Current Location</option>
-                )}
+                
                 {PRESET_PLACES.map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name}
@@ -115,15 +144,7 @@ const GISMap = () => {
               </select>
             </div>
 
-            <button
-              onClick={requestCurrentLocation}
-              disabled={loadingLocation}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900 hover:bg-blue-100 transition-all cursor-pointer"
-              title="Use GPS Location"
-            >
-              <Navigation className={`w-3.5 h-3.5 ${loadingLocation ? 'animate-spin' : ''}`} />
-              <span>{loadingLocation ? 'Locating...' : 'Use My GPS'}</span>
-            </button>
+            
 
             <span className="text-[11px] text-slate-400 dark:text-slate-500">
               (Click anywhere on map to move center)
@@ -183,6 +204,7 @@ const GISMap = () => {
       {/* Map Card */}
       <div className="flex-1 bg-white dark:bg-slate-900 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-800/80 overflow-hidden relative z-0">
         <MapContainer center={center} zoom={13} className="w-full h-full">
+          <ChangeView center={center} />
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
@@ -290,3 +312,4 @@ const GISMap = () => {
 };
 
 export default GISMap;
+

@@ -1,10 +1,151 @@
-import { Activity, MapPin, AlertCircle, Clock, ArrowUpRight, TrendingUp, ShieldCheck, Layers, Eye, ChevronDown, MapPinOff, Navigation, Compass } from 'lucide-react';
+import { Activity, MapPin, AlertCircle, Clock, ArrowUpRight, TrendingUp, ShieldCheck, Layers, Eye, ChevronDown, MapPinOff, Navigation, Compass, Database } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import UrbanShowcase from '../components/UrbanShowcase';
 import { useLocationData, PRESET_PLACES } from '../context/LocationContext';
+import { useState, useEffect } from 'react';
+import { getDetections, createDetection } from '../services/detectionService.js';
 
 const Dashboard = () => {
-  const { location, error, loadingLocation, mockDetections, updateLocation, requestCurrentLocation } = useLocationData();
+  const { location, error, loadingLocation, mockDetections, updateLocation } = useLocationData();
+  const [dashboardAlerts, setDashboardAlerts] = useState([]);
+  
+  useEffect(() => {
+    if (!location) return;
+    
+    let isMounted = true;
+    const fetchAndEnsureDetections = async () => {
+      try {
+        const allDetections = await getDetections({ includeDemo: true, includeMarkers: true });
+        const placeNameStr = location.placeName;
+        const placeAlerts = allDetections.filter(d => d.area === placeNameStr);
+        const areaIdStr = String(placeNameStr).replace(/\s+/g, '-').toUpperCase();
+        const latStr = location.lat.toFixed(3);
+        const lngStr = location.lng.toFixed(3);
+        const viewportId = `${areaIdStr}_${latStr}_${lngStr}`;
+        
+        const hasMarker = placeAlerts.some(d => d.status === 'VIEWPORT_MARKER');
+        const displayAlerts = placeAlerts.filter(d => d.status !== 'VIEWPORT_MARKER');
+        
+        // Let dashboard just show whatever exists for the place if it has been analyzed before
+        if (hasMarker || displayAlerts.length > 0) {
+          if (isMounted) setDashboardAlerts(displayAlerts);
+        } else {
+          // Generate demo alerts if none exist for this place
+          const currDate = new Date().toISOString().split('T')[0];
+          const actualHistDate = '2014-02-20'; // Default baseline
+          const seedStr = location.lat.toFixed(3) + location.lng.toFixed(3) + actualHistDate + currDate;
+          let seed = 0;
+          for (let i = 0; i < seedStr.length; i++) {
+              seed = ((seed << 5) - seed) + seedStr.charCodeAt(i);
+              seed = seed & seed; 
+          }
+          function seededRandom() {
+              let x = Math.sin(seed++) * 10000; return x - Math.floor(x);
+          }
+          
+          let candidates = [];
+          const changeTypes = [
+            "Possible new structure",
+            "Building footprint expansion",
+            "Construction/earthwork",
+            "New paved/parking area",
+            "Roof/structural modification",
+            "Significant plot development"
+          ];
+          
+          for (let i = 0; i < 15; i++) {
+            const w = Math.floor(seededRandom() * 20) + 15;
+            const h = Math.floor(seededRandom() * 20) + 15;
+            const latOffset = (seededRandom() - 0.5) * 0.01;
+            const lngOffset = (seededRandom() - 0.5) * 0.01;
+            const detLat = location.lat + latOffset;
+            const detLng = location.lng + lngOffset;
+            const sizeLat = (w / 256) * 0.001;
+            const sizeLng = (h / 256) * 0.001;
+            
+            const type = changeTypes[Math.floor(seededRandom() * changeTypes.length)];
+            const conf = (seededRandom() * 0.3 + 0.65).toFixed(2);
+            const finalConfidence = Math.round(conf * 100);
+            const areaSqMeters = w * h * 2.5; 
+            
+            let typeScore = 0;
+            if (type.includes("new structure")) typeScore = 0.9;
+            else if (type.includes("expansion")) typeScore = 0.8;
+            else if (type.includes("development")) typeScore = 0.7;
+            else if (type.includes("modification")) typeScore = 0.6;
+            else if (type.includes("earthwork")) typeScore = 0.5;
+            else typeScore = 0.4;
+            
+            let areaScore = Math.min(areaSqMeters / 2500, 1.0);
+            let confScore = (finalConfidence - 65) / 30;
+            let combined = (typeScore * 0.4) + (areaScore * 0.3) + (confScore * 0.3);
+            let calcRisk = 'Low';
+            if (combined > 0.75) calcRisk = 'High';
+            else if (combined > 0.45) calcRisk = 'Medium';
+            
+            candidates.push({
+              combined,
+              payload: {
+                id: `TEMP-${i}`, // temp
+                latitude: detLat,
+                longitude: detLng,
+                polygon: [
+                    [detLat - sizeLat, detLng - sizeLng],
+                    [detLat - sizeLat, detLng + sizeLng],
+                    [detLat + sizeLat, detLng + sizeLng],
+                    [detLat + sizeLat, detLng - sizeLng]
+                ],
+                area: placeNameStr,
+                confidence: finalConfidence,
+                risk: calcRisk,
+                date: new Date().toISOString(),
+                status: 'Pending Inspection',
+                is_demo: true,
+                type: type,
+                description: `[AI DEMO / SIMULATED CANDIDATE] ${type} detected. Estimated affected area: ~${areaSqMeters.toFixed(1)} sq meters.`
+              }
+            });
+          }
+          
+          candidates.sort((a, b) => b.combined - a.combined);
+          const demoCount = Math.floor(seededRandom() * 5) + 8; // 8 to 12
+          const ts = Date.now().toString(36).toUpperCase();
+          const newAlerts = candidates.slice(0, demoCount).map((c, i) => {
+             c.payload.id = `DET-${viewportId}-${ts}-${i + 1}`;
+             return c.payload;
+          });
+          
+          newAlerts.push({
+              id: `VIEWPORT-${viewportId}`,
+              latitude: location.lat,
+              longitude: location.lng,
+              polygon: [],
+              area: placeNameStr,
+              confidence: 100,
+              risk: 'Low',
+              date: new Date().toISOString(),
+              status: 'VIEWPORT_MARKER',
+              is_demo: true,
+              type: 'System Marker',
+              description: 'Internal viewport memory marker.'
+          });
+          
+          // Upsert to DB
+          for (const alert of newAlerts) {
+            await createDetection(alert).catch(() => {});
+          }
+          
+          if (isMounted) setDashboardAlerts(newAlerts.filter(d => d.status !== 'VIEWPORT_MARKER'));
+        }
+      } catch (err) {
+        console.error("Failed to load dashboard alerts:", err);
+      }
+    };
+    
+    fetchAndEnsureDetections();
+    
+    return () => { isMounted = false; };
+  }, [location]);
   
   const stats = [
     {
@@ -17,7 +158,7 @@ const Dashboard = () => {
     },
     {
       title: 'Suspected Constructions',
-      value: `${(mockDetections || []).length} Demo Sites`,
+      value: `${dashboardAlerts.length} Demo Sites`,
       change: '5 simulated today',
       isIncrease: true,
       icon: <Activity className="w-5 h-5" />,
@@ -41,7 +182,7 @@ const Dashboard = () => {
     },
   ];
 
-  const recentAlerts = (mockDetections || []).map((d) => ({
+  const recentAlerts = dashboardAlerts.map((d) => ({
     ...d,
     loc: `${d.area}, ${d.city}`,
   }));
@@ -95,9 +236,6 @@ const Dashboard = () => {
                   if (place) updateLocation(place.lat, place.lng, place.name);
                 }}
               >
-                {location && location.isUserCurrent && (
-                  <option value="My Current Location">My Current Location</option>
-                )}
                 {PRESET_PLACES.map((p) => (
                   <option key={p.name} value={p.name}>
                     {p.name}
@@ -105,16 +243,6 @@ const Dashboard = () => {
                 ))}
               </select>
             </div>
-
-            <button
-              onClick={requestCurrentLocation}
-              disabled={loadingLocation}
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-xl text-xs font-semibold bg-blue-50 dark:bg-blue-950/60 text-blue-600 dark:text-blue-400 border border-blue-200 dark:border-blue-900 hover:bg-blue-100 transition-all cursor-pointer"
-              title="Detect current browser location"
-            >
-              <Navigation className={`w-3.5 h-3.5 ${loadingLocation ? 'animate-spin' : ''}`} />
-              <span>{loadingLocation ? 'Locating...' : 'Use My GPS'}</span>
-            </button>
 
             {location && (
               <span className="text-xs font-mono text-slate-500 dark:text-slate-400">
@@ -190,7 +318,7 @@ const Dashboard = () => {
                   Recent Detection Alerts
                 </h2>
                 <span className="px-2 py-0.5 text-[10px] font-bold rounded bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900">
-                  SIMULATED DEMO DATA
+                  AI DEMO / SIMULATED CANDIDATE
                 </span>
               </div>
               <p className="text-xs text-slate-500 dark:text-slate-400">
