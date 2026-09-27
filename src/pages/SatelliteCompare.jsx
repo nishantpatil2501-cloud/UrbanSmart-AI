@@ -1,26 +1,56 @@
-﻿import { useState, useRef } from 'react';
+﻿import { useState, useRef, useEffect } from 'react';
 import { Layers, ScanSearch, Calendar, ArrowRight, CheckCircle2, AlertTriangle, MapPin, Sparkles, SlidersHorizontal, UploadCloud, FileImage, Cpu } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Polygon } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polygon, WMSTileLayer } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { WAYBACK_RELEASES } from '../data/waybackArray.js';
 
-const getNearestWayback = (targetDateStr) => {
-    const target = new Date(targetDateStr).getTime();
-    let nearest = WAYBACK_RELEASES[0];
-    let minDiff = Infinity;
+const getImageryInfo = async (targetDateStr, lat, lng) => {
+    const targetMs = new Date(targetDateStr).getTime();
+    const waybackStart = new Date('2014-02-20').getTime();
     
-    for (const entry of WAYBACK_RELEASES) {
-        const d = new Date(entry.date).getTime();
-        const diff = Math.abs(d - target);
-        if (diff < minDiff) {
-            minDiff = diff;
-            nearest = entry;
+    if (targetMs >= waybackStart) {
+        let nearest = WAYBACK_RELEASES[WAYBACK_RELEASES.length - 1];
+        let minDiff = Infinity;
+        
+        for (const entry of WAYBACK_RELEASES) {
+            const d = new Date(entry.date).getTime();
+            if (d <= targetMs) {
+                const diff = targetMs - d;
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    nearest = entry;
+                }
+            }
         }
+        
+        const actualDate = nearest.date;
+        const url = `https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/${nearest.layer}/{z}/{y}/{x}`;
+        return { type: 'wayback', url, actualDate, source: 'Esri World Imagery Wayback' };
+    } else {
+        try {
+            const geom = encodeURIComponent(JSON.stringify({ x: lng, y: lat }));
+            const qUrl = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/query?where=Category%3D1&geometry=${geom}&geometryType=esriGeometryPoint&inSR=4326&outFields=AcquisitionDate,SensorName&orderByFields=AcquisitionDate+DESC&time=1262304000000,${targetMs}&returnGeometry=false&f=json`;
+            
+            const res = await fetch(qUrl);
+            const data = await res.json();
+            
+            if (data.features && data.features.length > 0) {
+                const attrs = data.features[0].attributes;
+                if (attrs.AcquisitionDate) {
+                    const actualDate = new Date(attrs.AcquisitionDate).toISOString().split('T')[0];
+                    const sensor = attrs.SensorName || 'USGS Landsat';
+                    const timeWindow = `${attrs.AcquisitionDate - 86400000},${attrs.AcquisitionDate + 86400000}`;
+                    const url = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/exportImage?bbox={bbox}&bboxSR=3857&imageSR=3857&size=256,256&format=jpgpng&f=image&time=${timeWindow}`;
+                    return { type: 'landsat', url, actualDate, source: `USGS Archive (${sensor})` };
+                }
+            }
+        } catch(e) {
+            console.error("Landsat query error:", e);
+        }
+        
+        const url = `https://landsat2.arcgis.com/arcgis/rest/services/Landsat/PS/ImageServer/exportImage?bbox={bbox}&bboxSR=3857&imageSR=3857&size=256,256&format=jpgpng&f=image&time=1262304000000,${targetMs}`;
+        return { type: 'landsat', url, actualDate: targetDateStr, source: 'USGS Landsat Archive' };
     }
-    
-    const actualDate = nearest.date;
-    const url = `https://wayback.maptiles.arcgis.com/arcgis/rest/services/World_Imagery/WMTS/1.0.0/default028mm/MapServer/tile/${nearest.layer}/{z}/{y}/{x}`;
-    return { url, actualDate };
 };
 
 
@@ -99,13 +129,11 @@ const SatelliteCompare = () => {
   const [isComparing, setIsComparing] = useState(false);
   const [showResult, setShowResult] = useState(false);
   const todayStr = new Date().toISOString().split('T')[0];
-  const [histDate, setHistDate] = useState('2014-02-20');
+  const [histDate, setHistDate] = useState('2023-12-07');
   const [currDate, setCurrDate] = useState(todayStr);
   const [actualHistDate, setActualHistDate] = useState('');
   const [actualCurrDate, setActualCurrDate] = useState('');
-  const [histMapUrl, setHistMapUrl] = useState('');
-  const [currMapUrl, setCurrMapUrl] = useState('');
-  
+      
   const [beforeFile, setBeforeFile] = useState(null);
   const [currentFile, setCurrentFile] = useState(null);
   const [beforePreview, setBeforePreview] = useState(null);
@@ -122,14 +150,26 @@ const SatelliteCompare = () => {
 
   const area = puneAreas[selectedArea];
 
+  const [histLayer, setHistLayer] = useState(null);
+  const [currLayer, setCurrLayer] = useState(null);
+
   useEffect(() => {
-    const hist = getNearestWayback(histDate);
-    const curr = getNearestWayback(currDate);
-    setHistMapUrl(hist.url);
-    setActualHistDate(hist.actualDate);
-    setCurrMapUrl(curr.url);
-    setActualCurrDate(curr.actualDate);
-  }, [histDate, currDate]);
+    let active = true;
+    const fetchLayers = async () => {
+      const hist = await getImageryInfo(histDate, area.lat, area.lng);
+      const curr = await getImageryInfo(currDate, area.lat, area.lng);
+      if (active) {
+        setHistLayer(hist);
+        setActualHistDate(hist.actualDate);
+        setCurrLayer(curr);
+        setActualCurrDate(curr.actualDate);
+      }
+    };
+    fetchLayers();
+    return () => { active = false; };
+  }, [histDate, currDate, selectedArea]);
+
+
 
   const handleDeleteDetection = async (id) => {
     try {
@@ -353,7 +393,7 @@ const SatelliteCompare = () => {
                 zoomControl={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer url={histMapUrl || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
+                <TileLayer key={histLayer?.url || "hist"} url={histLayer?.url || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
                 <Marker position={[area.lat, area.lng]} />
                 <Polygon
                   positions={area.polygon}
@@ -408,7 +448,7 @@ const SatelliteCompare = () => {
                 zoomControl={true}
                 scrollWheelZoom={false}
               >
-                <TileLayer url={histMapUrl || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
+                <TileLayer key={histLayer?.url || "hist"} url={histLayer?.url || esriSatellite} maxZoom={19} attribution="Esri World Imagery" />
                 <Marker position={[area.lat, area.lng]} />
 
                 {showResult && (
