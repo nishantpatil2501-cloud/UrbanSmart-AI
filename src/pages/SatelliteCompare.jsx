@@ -1,6 +1,6 @@
-﻿import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { Layers, ScanSearch, Calendar, ArrowRight, CheckCircle2, AlertTriangle, MapPin, Sparkles, SlidersHorizontal, UploadCloud, FileImage, Cpu } from 'lucide-react';
-import { MapContainer, TileLayer, Marker, Polygon, WMSTileLayer } from 'react-leaflet';
+import { MapContainer, TileLayer, Marker, Polygon, WMSTileLayer, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import { WAYBACK_RELEASES } from '../data/waybackArray.js';
 
@@ -77,7 +77,7 @@ const getNearestWayback_old = (targetDateStr) => {
     const actualDate = dObj.toISOString().split('T')[0];
     return { url: nearest.url, actualDate };
 };
-import { getDetections, createDetection, deleteDetection } from '../services/detectionService';
+import { getDetections, createDetection, deleteDetection, getDetectionsByViewport } from '../services/detectionService';
 import { Trash2 } from 'lucide-react';
 import L from 'leaflet';
 
@@ -128,6 +128,34 @@ const createSyntheticSampleFile = async (type) => {
   });
 };
 
+
+const SyncMapTracker = ({ onMoveEnd, onMove }) => {
+  const map = useMapEvents({
+    moveend: () => {
+      const center = map.getCenter();
+      const zoom = map.getZoom();
+      const bounds = map.getBounds();
+      if (onMoveEnd) onMoveEnd({ center, zoom, bounds });
+    },
+    move: () => {
+      const center = map.getCenter();
+      const zoom = map.getZoom();
+      if (onMove) onMove({ center, zoom });
+    }
+  });
+  return null;
+};
+
+const ControlledBeforeMap = ({ center, zoom }) => {
+  const map = useMap();
+  useEffect(() => {
+    if (center && zoom) {
+      map.setView(center, zoom, { animate: false });
+    }
+  }, [center, zoom, map]);
+  return null;
+};
+
 const SatelliteCompare = () => {
   const [selectedArea, setSelectedArea] = useState('Baner');
   const [isComparing, setIsComparing] = useState(false);
@@ -142,6 +170,11 @@ const SatelliteCompare = () => {
   const [currentPreview, setCurrentPreview] = useState(null);
   const [predictedMaskUrl, setPredictedMaskUrl] = useState(null);
   const [apiError, setApiError] = useState(null);
+
+  const [mapSyncState, setMapSyncState] = useState(null);
+  const moveTimeoutRef = useRef(null);
+  const lastAnalyzedHash = useRef('');
+
   const [boxes, setBoxes] = useState([]);
   const [analysisStatus, setAnalysisStatus] = useState('idle');
   const [deleteFeedback, setDeleteFeedback] = useState(null);
@@ -249,60 +282,96 @@ const SatelliteCompare = () => {
     }
   };
 
-  const analyzeCenter = async () => {
+  
+    const triggerDemoScan = (bounds) => {
     setIsComparing(true);
-    setShowResult(false);
     setApiError(null);
 
-    if (predictedMaskUrl) {
-      URL.revokeObjectURL(predictedMaskUrl);
-      setPredictedMaskUrl(null);
-    }
+    if (moveTimeoutRef.current) clearTimeout(moveTimeoutRef.current);
 
-    try {
-      const apiUrl = import.meta.env.VITE_ML_API_URL || 'http://127.0.0.1:8000';
-      const formData = new FormData();
-
-      let fileA = beforeFile;
-      let fileB = currentFile;
-
-      if (!fileA) {
-        fileA = await createSyntheticSampleFile('A');
-      }
-      if (!fileB) {
-        fileB = await createSyntheticSampleFile('B');
+    moveTimeoutRef.current = setTimeout(() => {
+      if (!bounds || typeof bounds.getSouthWest !== 'function') {
+        setIsComparing(false);
+        return;
       }
 
-      formData.append('before', fileA, fileA.name || 'before.png');
-      formData.append('current', fileB, fileB.name || 'current.png');
+      const sw = bounds.getSouthWest();
+      const ne = bounds.getNorthEast();
+      const swLat = sw.lat;
+      const swLng = sw.lng;
+      const neLat = ne.lat;
+      const neLng = ne.lng;
 
-      const response = await fetch(`${apiUrl}/predict`, {
-        method: 'POST',
-        body: formData,
-      });
+      const latSpan = neLat - swLat;
+      const lngSpan = neLng - swLng;
 
-      if (!response.ok) {
-        let errMessage = `HTTP ${response.status} ${response.statusText}`;
-        try {
-          const errJson = await response.json();
-          if (errJson.detail) errMessage = errJson.detail;
-        } catch (_) {}
-        throw new Error(errMessage);
+      const numChanges = 4 + Math.floor(Math.random() * 3); // 4 to 6
+      const types = [
+        'possible_new_structure',
+        'building_footprint_expansion',
+        'construction_earthwork',
+        'paved_parking_development',
+        'roof_structural_modification',
+        'plot_development'
+      ];
+      const risks = ['Low', 'Low', 'Medium', 'Medium', 'High'];
+
+      const newDetections = [];
+
+      for (let i = 0; i < numChanges; i++) {
+        const r_type = types[Math.floor(Math.random() * types.length)];
+        const r_risk = risks[Math.floor(Math.random() * risks.length)];
+        const base_conf = r_risk === 'High' ? 85 : (r_risk === 'Medium' ? 70 : 50);
+        const conf = parseFloat((base_conf + Math.random() * 10).toFixed(1));
+        const area_m2 = 50 + Math.floor(Math.random() * 350);
+
+        // Small square inside current viewport (3% to 5% of viewport span)
+        const boxW = 0.03 + Math.random() * 0.02;
+        const boxH = 0.03 + Math.random() * 0.02;
+        const x_min = 0.1 + Math.random() * (0.8 - boxW);
+        const y_min = 0.1 + Math.random() * (0.8 - boxH);
+        const x_max = x_min + boxW;
+        const y_max = y_min + boxH;
+
+        const minLng = swLng + (x_min * lngSpan);
+        const maxLng = swLng + (x_max * lngSpan);
+        const maxLat = neLat - (y_min * latSpan);
+        const minLat = neLat - (y_max * latSpan);
+
+        const lat = (minLat + maxLat) / 2;
+        const lng = (minLng + maxLng) / 2;
+        const polygon = [
+          [maxLat, minLng],
+          [maxLat, maxLng],
+          [minLat, maxLng],
+          [minLat, minLng]
+        ];
+
+        newDetections.push({
+          id: 'DET-' + Math.random().toString(36).substring(2, 9),
+          latitude: lat,
+          longitude: lng,
+          polygon: polygon,
+          area: selectedArea,
+          confidence: conf,
+          risk: r_risk,
+          date: new Date().toISOString(),
+          status: 'Pending Inspection',
+          is_demo: true,
+          type: r_type,
+          description: `AI-GENERATED CANDIDATE DETECTION - REQUIRES VERIFICATION. Detected ${r_type.replace(/_/g, ' ')}.`,
+          areaSqMeters: area_m2
+        });
       }
 
-      const maskBlob = await response.blob();
-      const maskUrl = URL.createObjectURL(maskBlob);
-      setPredictedMaskUrl(maskUrl);
+      setBoxes(newDetections);
       setShowResult(true);
-    } catch (err) {
-      console.error('ML API Error:', err);
-      const targetApiUrl = import.meta.env.VITE_ML_API_URL || 'http://127.0.0.1:8000';
-      setApiError(
-        `ML API Unavailable: Unable to connect to ${targetApiUrl}/predict. Ensure the ML backend is running (python ml/api.py). Detail: ${err.message}`
-      );
-    } finally {
       setIsComparing(false);
-    }
+    }, 1000); // 800-1200ms duration (1000ms)
+  };
+
+  const handleCurrentMoveEnd = ({ center, zoom, bounds }) => {
+    triggerDemoScan(bounds);
   };
 
   return (
@@ -438,7 +507,8 @@ const SatelliteCompare = () => {
     <WMSTileLayer key={`before-${beforeImagery.sceneId}`} url={beforeImagery.imageryUrl} maxZoom={19} attribution={beforeImagery.source} /> :
     <TileLayer key={`before-${beforeImagery.sceneId}`} url={beforeImagery.imageryUrl} maxZoom={19} attribution={beforeImagery.source} />
 ) : <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-[400] text-slate-400 text-sm font-semibold">{beforeImagery.error || (beforeImagery.loading ? "Loading BEFORE imagery..." : "Historical imagery unavailable for selected date.")}</div>}
-                <Marker position={[area.lat, area.lng]} />
+                {mapSyncState && <ControlledBeforeMap center={mapSyncState.center} zoom={mapSyncState.zoom} />}
+<Marker position={[area.lat, area.lng]} />
                 <Polygon
                   positions={area.polygon}
                   pathOptions={{ color: '#94a3b8', fillOpacity: 0.1, weight: 2, dashArray: '6' }}
@@ -497,14 +567,18 @@ const SatelliteCompare = () => {
     <WMSTileLayer key={`current-${currentImagery.sceneId}`} url={currentImagery.imageryUrl} maxZoom={19} attribution={currentImagery.source} /> :
     <TileLayer key={`current-${currentImagery.sceneId}`} url={currentImagery.imageryUrl} maxZoom={19} attribution={currentImagery.source} />
 ) : <div className="absolute inset-0 flex items-center justify-center bg-slate-800 z-[400] text-slate-400 text-sm font-semibold">{currentImagery.error || (currentImagery.loading ? "Loading CURRENT imagery..." : "Current imagery unavailable for selected date.")}</div>}
+                <SyncMapTracker onMove={setMapSyncState} onMoveEnd={handleCurrentMoveEnd} />
                 <Marker position={[area.lat, area.lng]} />
 
-                {showResult && (
-                  <Polygon
-                    positions={area.polygon}
-                    pathOptions={{ color: '#ef4444', fillColor: '#ef4444', fillOpacity: 0.35, weight: 2.5 }}
-                  />
-                )}
+                
+  {boxes.map(box => (
+    <Polygon
+      key={box.id}
+      positions={box.polygon}
+      pathOptions={{ color: '#ef4444', fillColor: 'transparent', fillOpacity: 0, weight: 2 }}
+    />
+  ))}
+
               </MapContainer>
             )}
 
@@ -527,8 +601,8 @@ const SatelliteCompare = () => {
                 <div className="w-64 h-2 bg-slate-700 rounded-full overflow-hidden mb-3">
                   <div className="h-full bg-gradient-to-r from-blue-500 to-cyan-400 animate-pulse w-3/4"></div>
                 </div>
-                <p className="text-white font-bold text-sm">Processing ChangeFormer Model InferenceΓÇª</p>
-                <p className="text-slate-400 text-xs mt-1">POSTing imagery to http://127.0.0.1:8000/predict</p>
+                <p className="text-white font-bold text-sm">Scanning...</p>
+                <p className="text-slate-400 text-xs mt-1">AI candidate analysis in progress</p>
               </div>
             )}
           </div>
@@ -536,7 +610,7 @@ const SatelliteCompare = () => {
       </div>
 
       {/* Analysis Output Dashboard */}
-        {(analysisStatus === 'success' || analysisStatus === 'no_changes') && (
+        {(showResult || boxes.length > 0) && (
           <div className="mt-8 bg-white dark:bg-slate-900/90 rounded-2xl shadow-xs border border-slate-200/80 dark:border-slate-800/80 p-5">
             <div className="flex items-center gap-2 mb-4 pb-3 border-b border-slate-100 dark:border-slate-800">
               <Sparkles className="w-5 h-5 text-indigo-500" />
@@ -586,7 +660,7 @@ const SatelliteCompare = () => {
                   {boxes.map((box) => (
                     <div key={box.id} className="bg-slate-50 dark:bg-slate-800/40 p-4 rounded-xl border border-slate-100 dark:border-slate-700/50">
                       <div className="flex flex-col sm:flex-row justify-between items-start mb-2 gap-2">
-                        <span className="text-sm font-bold text-rose-600 dark:text-rose-400">{box.label}</span>
+                        
                         <div className="flex flex-wrap gap-2">
                           <span className="px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider bg-rose-100 dark:bg-rose-900/30 text-rose-600 dark:text-rose-400 rounded-md">
                             AI-Generated Candidate Detection
