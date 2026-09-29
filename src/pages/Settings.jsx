@@ -113,10 +113,10 @@ const Settings = () => {
                 Default Regional Center
               </label>
               <select className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500">
-                <option>Pune Urban Metropolitan (Default)</option>
-                <option>Pimpri-Chinchwad (PCMC)</option>
-                <option>Haveli Taluka Zone</option>
-                <option>Entire Maharashtra</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Pune Urban Metropolitan (Default)</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Pimpri-Chinchwad (PCMC)</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Haveli Taluka Zone</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Entire Maharashtra</option>
               </select>
             </div>
             <div>
@@ -124,9 +124,9 @@ const Settings = () => {
                 Default Satellite Basemap
               </label>
               <select className="w-full bg-slate-50 dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700 rounded-xl p-2.5 text-xs sm:text-sm text-slate-800 dark:text-slate-200 focus:ring-2 focus:ring-blue-500">
-                <option>Esri World Imagery (High-Res)</option>
-                <option>OpenStreetMap Standard</option>
-                <option>Sentinel-2 False Color RGB</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Esri World Imagery (High-Res)</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">OpenStreetMap Standard</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Sentinel-2 False Color RGB</option>
               </select>
             </div>
           </div>

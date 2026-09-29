@@ -569,11 +569,11 @@ const CaseDetail = () => {
                 value={detection.status}
                 onChange={(e) => handleStatusChange(e.target.value)}
               >
-                <option>SIMULATED DEMO DATA</option>
-                <option>Pending Inspection</option>
-                <option>Under Review</option>
-                <option>Verified Unauthorized</option>
-                <option>Approved / Dismissed</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">SIMULATED DEMO DATA</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Pending Inspection</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Under Review</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Verified Unauthorized</option>
+                <option className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Approved / Dismissed</option>
               </select>
             </div>
 
@@ -590,9 +590,9 @@ const CaseDetail = () => {
                   value={selectedOfficer}
                   onChange={(e) => setSelectedOfficer(e.target.value)}
                 >
-                  <option value="Officer R. Deshmukh (Zone A - Haveli)">Officer R. Deshmukh (Zone A - Haveli)</option>
-                  <option value="Officer S. Patil (Zone B - Kothrud)">Officer S. Patil (Zone B - Kothrud)</option>
-                  <option value="Officer V. Kulkarni (Zone C - Viman Nagar)">Officer V. Kulkarni (Zone C - Viman Nagar)</option>
+                  <option value="Officer R. Deshmukh (Zone A - Haveli)" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Officer R. Deshmukh (Zone A - Haveli)</option>
+                  <option value="Officer S. Patil (Zone B - Kothrud)" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Officer S. Patil (Zone B - Kothrud)</option>
+                  <option value="Officer V. Kulkarni (Zone C - Viman Nagar)" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">Officer V. Kulkarni (Zone C - Viman Nagar)</option>
                 </select>
               </div>
             </div>

@@ -137,7 +137,7 @@ const GISMap = () => {
               >
                 
                 {PRESET_PLACES.map((p) => (
-                  <option key={p.name} value={p.name}>
+                  <option key={p.name} value={p.name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
                     {p.name}
                   </option>
                 ))}
