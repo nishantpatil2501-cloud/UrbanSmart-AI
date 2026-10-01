@@ -124,3 +124,21 @@ export async function deleteDetection(id) {
 
   return true;
 }
+
+/**
+ * Fetch detections by viewport hash.
+ * @param {string} hash Viewport hash
+ */
+export async function getDetectionsByViewport(hash) {
+  const { data, error } = await supabase
+    .from('detections')
+    .select('*')
+    .like('id', `%${hash}%`);
+  
+  if (error) {
+    console.error(`Error fetching detections for viewport ${hash}:`, error);
+    throw error;
+  }
+  
+  return data || [];
+}

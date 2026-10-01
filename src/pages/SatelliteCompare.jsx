@@ -245,6 +245,7 @@ const SatelliteCompare = () => {
 
 
   const handleDeleteDetection = async (id) => {
+    if (!window.confirm(`Delete this detection?\nDetection ID: ${id}`)) return;
     try {
       await deleteDetection(id);
       deletedIds.current.add(id);
@@ -253,6 +254,7 @@ const SatelliteCompare = () => {
       setTimeout(() => setDeleteFeedback(null), 3000);
     } catch(err) {
       console.error("Delete failed", err);
+      alert(`Delete failed: ${err.message || String(err)}`);
     }
   };
 
@@ -283,18 +285,15 @@ const SatelliteCompare = () => {
   };
 
   
-    const triggerDemoScan = (bounds) => {
-    setIsComparing(true);
+    const triggerDemoScan = async (center, zoom, bounds) => {
+    if (!bounds || typeof bounds.getSouthWest !== 'function') {
+      setIsComparing(false);
+      return;
+    }
+
     setApiError(null);
 
-    if (moveTimeoutRef.current) clearTimeout(moveTimeoutRef.current);
-
-    moveTimeoutRef.current = setTimeout(() => {
-      if (!bounds || typeof bounds.getSouthWest !== 'function') {
-        setIsComparing(false);
-        return;
-      }
-
+    try {
       const sw = bounds.getSouthWest();
       const ne = bounds.getNorthEast();
       const swLat = sw.lat;
@@ -317,6 +316,16 @@ const SatelliteCompare = () => {
       const risks = ['Low', 'Low', 'Medium', 'Medium', 'High'];
 
       const newDetections = [];
+      const timestamp = Date.now().toString(36);
+
+      const typeDescMap = {
+        'possible_new_structure': 'Possible new structure detected in the visible urban area.',
+        'building_footprint_expansion': 'Possible building footprint expansion.',
+        'construction_earthwork': 'Possible construction/earthwork activity.',
+        'paved_parking_development': 'Possible paved/parking development.',
+        'roof_structural_modification': 'Possible roof or structural modification.',
+        'plot_development': 'Possible plot development or land clearing.'
+      };
 
       for (let i = 0; i < numChanges; i++) {
         const r_type = types[Math.floor(Math.random() * types.length)];
@@ -347,8 +356,10 @@ const SatelliteCompare = () => {
           [minLat, minLng]
         ];
 
-        newDetections.push({
-          id: 'DET-' + Math.random().toString(36).substring(2, 9),
+        const detId = `DET-${timestamp}-${i}`;
+
+        const newDet = {
+          id: detId,
           latitude: lat,
           longitude: lng,
           polygon: polygon,
@@ -361,17 +372,26 @@ const SatelliteCompare = () => {
           type: r_type,
           description: `AI-GENERATED CANDIDATE DETECTION - REQUIRES VERIFICATION. Detected ${r_type.replace(/_/g, ' ')}.`,
           areaSqMeters: area_m2
-        });
+        };
+
+        const saved = await createDetection(newDet);
+        newDetections.push(saved);
       }
 
       setBoxes(newDetections);
       setShowResult(true);
+    } catch (err) {
+      console.error(err);
+      setApiError(err.message || String(err));
+    } finally {
       setIsComparing(false);
-    }, 1000); // 800-1200ms duration (1000ms)
+    }
   };
 
   const handleCurrentMoveEnd = ({ center, zoom, bounds }) => {
-    triggerDemoScan(bounds);
+    if (moveTimeoutRef.current) clearTimeout(moveTimeoutRef.current);
+    setIsComparing(true);
+    moveTimeoutRef.current = setTimeout(() => { triggerDemoScan(center, zoom, bounds); }, 600);
   };
 
   return (

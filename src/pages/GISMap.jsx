@@ -67,6 +67,7 @@ const GISMap = () => {
   const navigate = useNavigate();
   const { location, error, updateLocation } = useLocationData();
   const [detections, setDetections] = useState([]);
+  const [apiError, setApiError] = useState(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -107,6 +108,7 @@ const GISMap = () => {
 
   return (
     <div className="h-[calc(100vh-7.5rem)] flex flex-col space-y-4 max-w-7xl mx-auto">
+      {apiError && <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 p-4 rounded-xl mb-4 text-sm font-semibold">Database Connection Error: {apiError}</div>}
       {/* Top Header & Legend Task Bar */}
       <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 shrink-0 pb-1 border-b border-slate-200/80 dark:border-slate-800">
         <div>

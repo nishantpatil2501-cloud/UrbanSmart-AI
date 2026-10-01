@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { getDetections } from '../services/detectionService.js';
-import { Search, Filter, Eye, AlertTriangle, ShieldAlert, CheckCircle2, Clock, XCircle, ArrowUpDown, MapPin } from 'lucide-react';
+import { getDetections, deleteDetection } from '../services/detectionService.js';
+import { Search, Filter, Eye, AlertTriangle, ShieldAlert, CheckCircle2, Clock, XCircle, ArrowUpDown, MapPin, Trash2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { useLocationData, PRESET_PLACES } from '../context/LocationContext';
 
@@ -23,6 +23,17 @@ const Alerts = () => {
       });
     return () => { isMounted = false; };
   }, []);
+
+  const handleDelete = async (id) => {
+    if (!window.confirm(`Delete this case? (ID: ${id})`)) return;
+    try {
+      await deleteDetection(id);
+      setDetections((prev) => prev.filter(d => d.id !== id));
+    } catch (err) {
+      console.error('Failed to delete detection:', err);
+      alert('Failed to delete case report.');
+    }
+  };
 
   const normalizedDetections = (detections || []).map((d) => ({
     ...d,
@@ -190,12 +201,21 @@ const Alerts = () => {
                       </span>
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <button
-                        onClick={() => navigate(`/cases/${det.id}`)}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-colors cursor-pointer"
-                      >
-                        <Eye className="w-3.5 h-3.5" /> View Case
-                      </button>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => navigate(`/cases/${det.id}`)}
+                          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-blue-600 hover:bg-blue-500 text-white shadow-xs transition-colors cursor-pointer"
+                        >
+                          <Eye className="w-3.5 h-3.5" /> View Case
+                        </button>
+                        <button
+                          onClick={() => handleDelete(det.id)}
+                          className="inline-flex items-center justify-center p-1.5 rounded-lg text-xs font-semibold bg-rose-100 hover:bg-rose-200 text-rose-600 dark:bg-rose-900/30 dark:hover:bg-rose-900/50 dark:text-rose-400 shadow-xs transition-colors cursor-pointer border border-rose-200 dark:border-rose-800"
+                          title="Delete Case"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))

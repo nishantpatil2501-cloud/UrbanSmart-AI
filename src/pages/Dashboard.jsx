@@ -8,142 +8,32 @@ import { getDetections, createDetection } from '../services/detectionService.js'
 const Dashboard = () => {
   const { location, error, loadingLocation, mockDetections, updateLocation } = useLocationData();
   const [dashboardAlerts, setDashboardAlerts] = useState([]);
+  const [apiError, setApiError] = useState(null);
   
   useEffect(() => {
+    let isMounted = true;
     if (!location) return;
     
-    let isMounted = true;
-    const fetchAndEnsureDetections = async () => {
+    const fetchDetections = async () => {
       try {
-        const allDetections = await getDetections({ includeDemo: true, includeMarkers: true });
-        const placeNameStr = location.placeName;
-        const placeAlerts = allDetections.filter(d => d.area === placeNameStr);
-        const areaIdStr = String(placeNameStr).replace(/\s+/g, '-').toUpperCase();
-        const latStr = location.lat.toFixed(3);
-        const lngStr = location.lng.toFixed(3);
-        const viewportId = `${areaIdStr}_${latStr}_${lngStr}`;
+        const allDetections = await getDetections({ includeDemo: true });
+        if (!isMounted) return;
         
-        const hasMarker = placeAlerts.some(d => d.status === 'VIEWPORT_MARKER');
-        const displayAlerts = placeAlerts.filter(d => d.status !== 'VIEWPORT_MARKER');
+        // Filter for this place
+        const placeAlerts = allDetections.filter(d => d.area === location.placeName);
         
-        // Let dashboard just show whatever exists for the place if it has been analyzed before
-        if (hasMarker || displayAlerts.length > 0) {
-          if (isMounted) setDashboardAlerts(displayAlerts);
-        } else {
-          // Generate demo alerts if none exist for this place
-          const currDate = new Date().toISOString().split('T')[0];
-          const actualHistDate = '2014-02-20'; // Default baseline
-          const seedStr = location.lat.toFixed(3) + location.lng.toFixed(3) + actualHistDate + currDate;
-          let seed = 0;
-          for (let i = 0; i < seedStr.length; i++) {
-              seed = ((seed << 5) - seed) + seedStr.charCodeAt(i);
-              seed = seed & seed; 
-          }
-          function seededRandom() {
-              let x = Math.sin(seed++) * 10000; return x - Math.floor(x);
-          }
-          
-          let candidates = [];
-          const changeTypes = [
-            "Possible new structure",
-            "Building footprint expansion",
-            "Construction/earthwork",
-            "New paved/parking area",
-            "Roof/structural modification",
-            "Significant plot development"
-          ];
-          
-          for (let i = 0; i < 15; i++) {
-            const w = Math.floor(seededRandom() * 20) + 15;
-            const h = Math.floor(seededRandom() * 20) + 15;
-            const latOffset = (seededRandom() - 0.5) * 0.01;
-            const lngOffset = (seededRandom() - 0.5) * 0.01;
-            const detLat = location.lat + latOffset;
-            const detLng = location.lng + lngOffset;
-            const sizeLat = (w / 256) * 0.001;
-            const sizeLng = (h / 256) * 0.001;
-            
-            const type = changeTypes[Math.floor(seededRandom() * changeTypes.length)];
-            const conf = (seededRandom() * 0.3 + 0.65).toFixed(2);
-            const finalConfidence = Math.round(conf * 100);
-            const areaSqMeters = w * h * 2.5; 
-            
-            let typeScore = 0;
-            if (type.includes("new structure")) typeScore = 0.9;
-            else if (type.includes("expansion")) typeScore = 0.8;
-            else if (type.includes("development")) typeScore = 0.7;
-            else if (type.includes("modification")) typeScore = 0.6;
-            else if (type.includes("earthwork")) typeScore = 0.5;
-            else typeScore = 0.4;
-            
-            let areaScore = Math.min(areaSqMeters / 2500, 1.0);
-            let confScore = (finalConfidence - 65) / 30;
-            let combined = (typeScore * 0.4) + (areaScore * 0.3) + (confScore * 0.3);
-            let calcRisk = 'Low';
-            if (combined > 0.75) calcRisk = 'High';
-            else if (combined > 0.45) calcRisk = 'Medium';
-            
-            candidates.push({
-              combined,
-              payload: {
-                id: `TEMP-${i}`, // temp
-                latitude: detLat,
-                longitude: detLng,
-                polygon: [
-                    [detLat - sizeLat, detLng - sizeLng],
-                    [detLat - sizeLat, detLng + sizeLng],
-                    [detLat + sizeLat, detLng + sizeLng],
-                    [detLat + sizeLat, detLng - sizeLng]
-                ],
-                area: placeNameStr,
-                confidence: finalConfidence,
-                risk: calcRisk,
-                date: new Date().toISOString(),
-                status: 'Pending Inspection',
-                is_demo: true,
-                type: type,
-                description: `[AI DEMO / SIMULATED CANDIDATE] ${type} detected. Estimated affected area: ~${areaSqMeters.toFixed(1)} sq meters.`
-              }
-            });
-          }
-          
-          candidates.sort((a, b) => b.combined - a.combined);
-          const demoCount = Math.floor(seededRandom() * 5) + 8; // 8 to 12
-          const ts = Date.now().toString(36).toUpperCase();
-          const newAlerts = candidates.slice(0, demoCount).map((c, i) => {
-             c.payload.id = `DET-${viewportId}-${ts}-${i + 1}`;
-             return c.payload;
-          });
-          
-          newAlerts.push({
-              id: `VIEWPORT-${viewportId}`,
-              latitude: location.lat,
-              longitude: location.lng,
-              polygon: [],
-              area: placeNameStr,
-              confidence: 100,
-              risk: 'Low',
-              date: new Date().toISOString(),
-              status: 'VIEWPORT_MARKER',
-              is_demo: true,
-              type: 'System Marker',
-              description: 'Internal viewport memory marker.'
-          });
-          
-          // Upsert to DB
-          for (const alert of newAlerts) {
-            await createDetection(alert).catch(() => {});
-          }
-          
-          if (isMounted) setDashboardAlerts(newAlerts.filter(d => d.status !== 'VIEWPORT_MARKER'));
-        }
+        // Sort newest first
+        placeAlerts.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime());
+        placeAlerts.reverse();
+        
+        // Top 10
+        setDashboardAlerts(placeAlerts.slice(0, 10));
       } catch (err) {
         console.error("Failed to load dashboard alerts:", err);
       }
     };
     
-    fetchAndEnsureDetections();
-    
+    fetchDetections();
     return () => { isMounted = false; };
   }, [location]);
   
@@ -208,6 +98,7 @@ const Dashboard = () => {
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      {apiError && <div className="bg-rose-500/10 border border-rose-500/20 text-rose-600 dark:text-rose-400 p-4 rounded-xl text-sm font-semibold">Database Connection Error: {apiError}</div>}
       {/* Page Header / Top Action Bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-2 border-b border-slate-200/80 dark:border-slate-800">
         <div>
@@ -334,65 +225,77 @@ const Dashboard = () => {
           </div>
 
           <div className="divide-y divide-slate-100 dark:divide-slate-800/80 flex-1">
-            {recentAlerts.map((alert) => (
-              <div
-                key={alert.id}
-                className="px-6 py-4 flex items-center justify-between hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors"
-              >
-                <div className="flex items-center space-x-3.5">
-                  <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 font-mono text-xs font-bold shrink-0">
-                    {alert.id.split('-')[1]}
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm font-semibold text-slate-900 dark:text-slate-100">
-                        {alert.loc}
-                      </span>
-                      <span className="text-xs font-mono text-slate-400 dark:text-slate-500">
-                        {alert.id}
-                      </span>
-                    </div>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
-                      {alert.type} • <span className="font-semibold text-amber-600 dark:text-amber-400">{alert.status}</span>
-                    </p>
-                  </div>
+            {dashboardAlerts.length === 0 ? (
+                <div className="p-8 text-center text-slate-500 dark:text-slate-400 text-sm font-semibold">
+                  No recent detection reports for this location.
                 </div>
+              ) : (
+                dashboardAlerts.map((alert) => (
+                  <div
+                    key={alert.id}
+                    className="px-6 py-4 flex flex-col sm:flex-row sm:items-center justify-between hover:bg-slate-50/80 dark:hover:bg-slate-800/50 transition-colors gap-4"
+                  >
+                    <div className="flex items-start space-x-3.5 flex-1 min-w-0 pr-0 sm:pr-4">
+                      <div className="w-10 h-10 rounded-xl bg-slate-100 dark:bg-slate-800 flex items-center justify-center text-slate-700 dark:text-slate-300 shrink-0">
+                        <MapPin className="w-5 h-5 text-indigo-500" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-0.5 flex-wrap">
+                          <span className="text-sm font-semibold text-slate-900 dark:text-slate-100 truncate">
+                            {alert.area ? `${alert.area}, Pune` : 'Unknown location'}
+                          </span>
+                          <span className="text-xs font-mono text-slate-400 dark:text-slate-500 shrink-0">
+                            {alert.id}
+                          </span>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                          {(alert.type || 'Structure Anomaly').replace(/_/g, ' ')} • <span className="font-semibold text-amber-600 dark:text-amber-400">{alert.status || 'Pending Inspection'}</span>
+                        </p>
+                        {alert.latitude && alert.longitude && (
+                          <p className="text-[10px] font-mono text-slate-400 dark:text-slate-500 mt-1 truncate">
+                            {Math.abs(alert.latitude).toFixed(4)}° {alert.latitude >= 0 ? 'N' : 'S'}, {Math.abs(alert.longitude).toFixed(4)}° {alert.longitude >= 0 ? 'E' : 'W'}
+                          </p>
+                        )}
+                      </div>
+                    </div>
 
-                <div className="flex items-center space-x-3">
-                  <div className="hidden sm:flex flex-col items-end mr-1">
-                    <span className="text-xs font-medium text-slate-600 dark:text-slate-300">{alert.conf}% Match</span>
-                    <div className="w-16 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
-                      <div
-                        className={`h-full rounded-full ${
-                          alert.conf > 85 ? 'bg-rose-500' : alert.conf > 75 ? 'bg-amber-500' : 'bg-blue-500'
+                    <div className="flex items-center space-x-3 shrink-0">
+                      <div className="hidden sm:flex flex-col items-end mr-1">
+                        <span className="text-xs font-medium text-slate-600 dark:text-slate-300">
+                          {Math.round(alert.confidence || alert.conf || 0)}% Match
+                        </span>
+                        <div className="w-16 h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full mt-1 overflow-hidden">
+                          <div
+                            className={`h-full rounded-full ${
+                              (alert.confidence || alert.conf || 0) > 85 ? 'bg-rose-500' : (alert.confidence || alert.conf || 0) > 75 ? 'bg-amber-500' : 'bg-blue-500'
+                            }`}
+                            style={{ width: `${alert.confidence || alert.conf || 0}%` }}
+                          ></div>
+                        </div>
+                      </div>
+
+                      <span
+                        className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
+                          alert.risk === 'High'
+                            ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900'
+                            : alert.risk === 'Medium'
+                            ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900'
+                            : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900'
                         }`}
-                        style={{ width: `${alert.conf}%` }}
-                      ></div>
+                      >
+                        {alert.risk || 'Low'} Risk
+                      </span>
+
+                      <Link
+                        to={`/cases/${alert.id}`}
+                        className="p-1.5 text-slate-400 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors"
+                      >
+                        <ArrowUpRight className="w-4 h-4" />
+                      </Link>
                     </div>
                   </div>
-
-                  <span
-                    className={`px-2.5 py-1 rounded-full text-xs font-semibold ${
-                      alert.risk === 'High'
-                        ? 'bg-rose-100 dark:bg-rose-950/60 text-rose-700 dark:text-rose-400 border border-rose-200 dark:border-rose-900'
-                        : alert.risk === 'Medium'
-                        ? 'bg-amber-100 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border border-amber-200 dark:border-amber-900'
-                        : 'bg-blue-100 dark:bg-blue-950/60 text-blue-700 dark:text-blue-400 border border-blue-200 dark:border-blue-900'
-                    }`}
-                  >
-                    {alert.risk} Risk
-                  </span>
-
-                  <Link
-                    to={`/cases/${alert.id}`}
-                    className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
-                    title="View case details"
-                  >
-                    <Eye className="w-4 h-4" />
-                  </Link>
-                </div>
-              </div>
-            ))}
+                ))
+              )}
           </div>
         </div>
 

@@ -71,6 +71,7 @@ const CaseDetail = () => {
   const { id } = useParams();
   const { updateStatus } = useLocationData();
   const [detection, setDetection] = useState(null);
+  const [apiError, setApiError] = useState(null);
   const [loadingDetection, setLoadingDetection] = useState(true);
   const [copied, setCopied] = useState(false);
 

@@ -66,3 +66,22 @@ export async function updateInspection(id, updates) {
 
   return data;
 }
+
+
+/**
+ * Delete an inspection record by ID.
+ * @param {string} id Inspection UUID
+ */
+export async function deleteInspection(id) {
+  const { error } = await supabase
+    .from('inspections')
+    .delete()
+    .eq('id', id);
+
+  if (error) {
+    console.error('Error deleting inspection '+id+':', error);
+    throw error;
+  }
+
+  return true;
+}
