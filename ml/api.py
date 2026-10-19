@@ -145,7 +145,10 @@ async def lifespan(app: FastAPI):
     yield
     print("=== Shutting down ChangeFormer ML API ===")
 
-from ml.satellite import router as satellite_router
+try:
+    from ml.satellite import router as satellite_router
+except ModuleNotFoundError:
+    from satellite import router as satellite_router
 
 app = FastAPI(
     title="UrbanWatch AI — ChangeFormer & Copernicus STAC API",
@@ -450,5 +453,5 @@ Note: 'bbox' coordinates must be normalized from 0.0 to 1.0 relative to the view
 if __name__ == "__main__":
     import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    uvicorn.run("ml.api:app", host="0.0.0.0", port=port, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=port)
 
